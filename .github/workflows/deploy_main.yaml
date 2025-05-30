@@ -1,0 +1,81 @@
+name: Backend Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Clone backend repository
+        run: git clone https://${{ secrets.TRIGGER }}@github.com/GravitinoUp/backend_gravitino_gpt.git -b main backend_gravitino_gpt/
+
+      - name: Clone devops_gravitino repository
+        run: git clone https://${{ secrets.TRIGGER }}@github.com/GravitinoUp/devops_gravitino.git -b main
+
+      - name: Copy Dockerfile to frontend directory
+        run: |
+          cp devops_gravitino/docker_images/chat_ai_backend/Dockerfile backend_gravitino_gpt/
+          cp devops_gravitino/docker_images/chat_ai_backend/startup.sh backend_gravitino_gpt/
+          cp devops_gravitino/docker_images/chat_ai_backend/.dockerignore backend_gravitino_gpt/
+
+      - name: Import Secrets
+        id: import-secrets
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://vault.devops.gravitino.ru
+          token: ${{ secrets.VAULT_GITHUB_SECRET }}
+          secrets: |
+            secret/backend/gpt_main DATABASE_URL | DATABASE_URL ;
+            secret/backend/gpt_main JWT_ACCESS_SECRET | JWT_ACCESS_SECRET ;
+            secret/backend/gpt_main JWT_REFRESH_SECRET | JWT_REFRESH_SECRET ;
+            secret/backend/gpt_main PORT | PORT ;
+            secret/backend/gpt_main NODE_ENV | NODE_ENV
+
+      - name: Build Docker image
+        run: |
+          cd backend_gravitino_gpt/
+          docker build --no-cache --pull --build-arg PORT="${{ env.PORT }}" \
+          --build-arg DATABASE_URL="${{ env.DATABASE_URL }}" \
+          --build-arg JWT_ACCESS_SECRET="${{ env.JWT_ACCESS_SECRET }}" \
+          --build-arg JWT_REFRESH_SECRET="${{ env.JWT_REFRESH_SECRET }}" \
+          --build-arg NODE_ENV="${{ env.NODE_ENV }}" \
+          -t gravitino_chat_ai_backend_main .
+
+      - name: Login to Yandex Cloud Container Registry
+        id: login-cr
+        uses: yc-actions/yc-cr-login@v2
+        with:
+          yc-sa-json-credentials: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Tag Docker image
+        run: docker tag gravitino_chat_ai_backend_main cr.yandex/crpi5naitl8bfj04abju/gravitino_chat_ai_backend_main:${{ github.sha }}
+
+      - name: Push Docker image
+        run: docker push cr.yandex/crpi5naitl8bfj04abju/gravitino_chat_ai_backend_main:${{ github.sha }}
+
+      - name: Delete images
+        run: |
+          docker rmi --force cr.yandex/crpi5naitl8bfj04abju/gravitino_chat_ai_backend_main:${{ github.sha }}
+          docker rmi --force gravitino_chat_ai_backend_main:latest              
+
+      - name: Trigger test workflow
+        uses: actions/github-script@v5
+        with:
+          github-token: ${{ secrets.TRIGGER }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: 'GravitinoUp',
+              repo: 'devops_gravitino',
+              workflow_id: 'chat_ai_backend_workflow.yml',
+              ref: 'main',
+              inputs: {
+                imageTag: "${{ github.sha }}"
+              }
+            });

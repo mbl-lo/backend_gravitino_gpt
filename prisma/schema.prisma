@@ -1,0 +1,156 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["users", "data"]
+}
+
+model User {
+  id        String     @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  status    UserStatus @default(ACTIVE)
+  role      Role       @default(USER)
+
+  auth Auth?
+
+  chats Chat[]
+
+  userPermissions UserPermission[]
+
+  @@schema("users")
+}
+
+model Auth {
+  id             String @id @default(uuid()) @db.Uuid
+  email          String @unique
+  hashedPassword String
+  salt           String
+
+  // Привязка к User (обязательный внешний ключ)
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@schema("users")
+}
+
+model Chat {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title String
+
+  archivedAt DateTime?
+  deletedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+
+  @@schema("data")
+}
+
+model Message {
+  id     String @id @default(uuid()) @db.Uuid
+  chatId String @db.Uuid
+  chat   Chat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  role      MessageRole
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  currentVersionId String?         @db.Uuid
+  currentVersion   MessageVersion? @relation(fields: [currentVersionId], references: [id])
+
+  files String?
+
+  versions MessageVersion[] @relation("MessageVersions")
+
+  @@schema("data")
+}
+
+model MessageVersion {
+  id String @id @default(uuid()) @db.Uuid
+
+  messageId String  @db.Uuid
+  message   Message @relation("MessageVersions", fields: [messageId], references: [id], onDelete: Cascade)
+
+  content   String
+  type      MessageType
+  createdAt DateTime    @default(now())
+  Message   Message[]
+
+  @@schema("data")
+}
+
+model PermissionRef {
+  id             String           @id @default(uuid()) @db.Uuid
+  role           Role
+  permission     String
+  active         Boolean          @default(true)
+  UserPermission UserPermission[]
+
+  @@unique([role, permission])
+  @@schema("users")
+}
+
+model UserPermission {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  permissionRefId String        @db.Uuid
+  permissionRef   PermissionRef @relation(fields: [permissionRefId], references: [id], onDelete: Cascade)
+
+  limitValue Int?
+  remainder  Int?
+
+  @@unique([userId, permissionRefId])
+  @@schema("users")
+}
+
+enum MessageRole {
+  USER
+  AI
+
+  @@schema("data")
+}
+
+enum MessageType {
+  TEXT
+  FILE
+  PHOTO
+  VIDEO
+  VOICE
+  AUDIO
+
+  @@schema("data")
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+  DELETED
+
+  @@schema("users")
+}
+
+enum Role {
+  ADMIN
+  USER
+
+  @@schema("users")
+}
