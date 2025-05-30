@@ -2,6 +2,7 @@ import {ForbiddenException, Injectable, NotFoundException,} from '@nestjs/common
 import {PrismaService} from 'src/prisma/prisma.service';
 import {CreateMessageDto, UpdateMessageDto} from './dto/messages.dto';
 import axios from 'axios';
+import { Socket, } from 'socket.io';
 import * as url from "node:url";
 
 @Injectable()
@@ -11,7 +12,26 @@ export class MessagesService {
     return Buffer.from(str, 'latin1').toString('utf8');
   }
 
-  async sendMessage(chatId: string, userId: string, dto: CreateMessageDto) {
+  private async simulateResponse(content: string, client: Socket, chatId: string){
+      const words = content.match(/\S+\s*/g) || [];
+
+      for (const word of words){
+        client.emit('response', {
+          chatId,
+          word,
+          isLast: false
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+      client.emit('response', {
+        chatId,
+        word: '',
+        isLast: true
+      })
+    }
+
+  async sendMessage(chatId: string, userId: string, dto: CreateMessageDto, clientSocket: Socket | undefined = undefined) {
     const chat = await this.prisma.chat.findUnique({
       where: { id: chatId },
     });
@@ -64,28 +84,30 @@ export class MessagesService {
         role,
       };
     });
-    let aiAnswer = "";
+    
     const payload = {
       context: messagesList,
       files: dto.url,
     };
-    try {
-      const response = await axios.post(
-          'https://chat-service.gravitino.ru/api/v1.0/gravitino/chat_helper_context', payload);
-      console.log('Ответ сервиса:', response.data.answer);
-      console.log(payload)
-      aiAnswer = response.data.answer;
-    } catch (err) {
-      console.error('Ошибка при вызове внешнего сервиса:', err.message);
-      console.error('Ошибка при вызове внешнего сервиса:', payload);
-    }
-
-    const message_chat = await this.prisma.message.create({
+    
+    const aiMessage = await this.prisma.message.create({
       data: {
         chatId: chatId,
         role: 'AI',
       },
     });
+
+const message_chat = await this.prisma.message.create({
+      data: {
+        chatId: chatId,
+        role: 'AI',
+      },
+    });
+
+    if (clientSocket != undefined) {
+      const aiAnswer = 'Имитация ответа: Когда первые колонисты Марса, изнурённые долгим перелётом сквозь радиационные пояса, наконец ступили на ржавую поверхность Красной планеты и установили купола биодомов с искусственной гравитацией, они вдруг осознали, что всё это время их сопровождал таинственный сигнал — возможно, след древней цивилизации, оставленный в кристаллах под поверхностью Долины Маринер, где роботы-разведчики уже обнаружили странные симметричные структуры, напоминающие то ли храм, то ли гигантский квантовый компьютер, способный, согласно гипотезам, искривлять пространство-время.'
+      
+      await this.simulateResponse(aiAnswer, clientSocket, chatId);
 
     const version_chat = await this.prisma.messageVersion.create({
       data: {
@@ -104,6 +126,8 @@ export class MessagesService {
             versions: true,
         },
     });
+  }
+  throw new Error('Клиент не подключен через WebSocket');
   }
 
   async editMessage(messageId: string, userId: string, dto: UpdateMessageDto) {
