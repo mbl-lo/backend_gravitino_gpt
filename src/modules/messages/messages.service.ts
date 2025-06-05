@@ -2,47 +2,112 @@ import {ForbiddenException, Injectable, NotFoundException,} from '@nestjs/common
 import {PrismaService} from 'src/prisma/prisma.service';
 import {CreateMessageDto, UpdateMessageDto} from './dto/messages.dto';
 import axios from 'axios';
-import { Server, Socket, } from 'socket.io';
+import { Server, Socket } from 'socket.io';
 import * as url from "node:url";
-import { OnGatewayConnection, OnGatewayDisconnect, WebSocketServer } from '@nestjs/websockets';
 import { JwtService } from '@nestjs/jwt';
 import { WebSocket } from 'ws';
 
 @Injectable()
-export class MessagesService implements OnGatewayConnection, OnGatewayDisconnect{
+export class MessagesService{
   chatSocket: WebSocket;
-  @WebSocketServer()
+  
   server: Server;
+
+  clients: Map<string, Socket>
+  pendingQueue: any[];
   
-  constructor(private readonly prisma: PrismaService, private readonly jwtSevice: JwtService) {this.chatSocket = new WebSocket("ws://localhost:10000");
+  constructor(private readonly prisma: PrismaService, private readonly jwtSevice: JwtService) {
     this.chatSocket = new WebSocket("ws://localhost:10000");
-    this.chatSocket.on('message', this.handleMessage);
+    this.chatSocket.on('message', (data) => this.handleMessage(data));
   
-    this.chatSocket.on('open', () => this.chatSocket.send(JSON.stringify({ event: 'splitText' })));
+    this.clients = new Map<string, Socket>();
+    this.pendingQueue = [];
+  }
+  
+  async handleMessage(data: WebSocket.Data) {
+    const message = JSON.parse(data.toString());
+
+    switch (message.event) {
+      case 'ai_response':
+        this.pendingQueue.push(message);
+        console.log(message.payload);
+        await this.processQueue();
+        break;
+      default:
+        console.log('DONE!');
     }
-     handleConnection(client: Socket) {
-    
   }
 
-  handleDisconnect(client: Socket) {
-    console.log(`Client disconnected: ${client.id}`);
+  async processQueue()
+  {
+    while (this.pendingQueue.length > 0) {
+      let message = this.pendingQueue.pop();
+      const userId = message.payload.userId
+      const chatId = message.payload.chatId
+      const client = this.clients.get(userId);
+      
+      let last_message_chat = await this.prisma.message.findFirst({
+        where: {
+          chatId: chatId
+        },
+        orderBy: {
+          createdAt: 'desc'
+        }
+      });
+      
+      if (last_message_chat == null || last_message_chat.role == 'USER') {
+        last_message_chat = await this.prisma.message.create({
+          data: {
+            chatId: message.payload.chatId,
+            role: 'AI',
+          }
+        });
+      }
+      
+      let version_chat = await this.prisma.messageVersion.findFirst({
+        where: {
+          messageId: last_message_chat.id
+        },
+      });
+      
+      if (version_chat == null) {
+        version_chat = await this.prisma.messageVersion.create({
+          data: {
+            messageId: last_message_chat.id,
+            content: message.payload.answer,
+            type: message.payload.type,
+          },
+        });
+      }
+      else {
+        version_chat = await this.prisma.messageVersion.update({
+          where: {
+            id: version_chat.id
+          },
+          data: {
+            content: version_chat.content + message.payload.answer,
+          },
+        });
+      }
+      
+      const response = this.prisma.message.update({
+        where: {id: last_message_chat.id},
+        data: {
+          currentVersionId: version_chat.id,
+        },
+        include: {
+          versions: true,
+        },
+      });
+      
+      if (client) client.emit('response', response);
+    }
   }
   
-    handleMessage(data: WebSocket.Data) {
-      const message = JSON.parse(data.toString());
-  
-      switch (message.event) {
-        case 'word':
-          console.log(message.content);
-          break;
-        default:
-          console.log('DONE!');
-      }
-    }
-  
-    handleDone() {
-      console.log("DONE!");
-    }
+  handleDone() {
+    console.log("DONE!");
+  }
+
   private fixEncoding(str: string): string {
     return Buffer.from(str, 'latin1').toString('utf8');
   }
@@ -59,6 +124,7 @@ export class MessagesService implements OnGatewayConnection, OnGatewayDisconnect
 
         await new Promise(resolve => setTimeout(resolve, 300));
       }
+
       client.emit('response', {
         chatId,
         word: '',
@@ -66,7 +132,7 @@ export class MessagesService implements OnGatewayConnection, OnGatewayDisconnect
       })
     }
 
-  async sendMessage(chatId: string, userId: string, dto: CreateMessageDto, clientSocket: Socket | undefined = undefined) {
+  async sendMessage(chatId: string, userId: string, dto: CreateMessageDto, clientSocket: Socket) {
     const chat = await this.prisma.chat.findUnique({
       where: { id: chatId },
     });
@@ -76,8 +142,12 @@ export class MessagesService implements OnGatewayConnection, OnGatewayDisconnect
     if (chat.userId !== userId) {
       throw new ForbiddenException('У вас нет доступа к этому чату');
     }
-    console.log(dto.url.join('&|'));
-    const filesUrl =  dto.url.join('&|');
+
+    console.log(userId);
+
+    this.clients.set(userId, clientSocket);
+    
+    const filesUrl = dto.url.join('&|');
     const message = await this.prisma.message.create({
       data: {
         chatId: chatId,
@@ -121,48 +191,13 @@ export class MessagesService implements OnGatewayConnection, OnGatewayDisconnect
     });
     
     const payload = {
+      userId: userId,
+      chatId: chatId,
       context: messagesList,
       files: dto.url,
     };
-    
-    const aiMessage = await this.prisma.message.create({
-      data: {
-        chatId: chatId,
-        role: 'AI',
-      },
-    });
 
-const message_chat = await this.prisma.message.create({
-      data: {
-        chatId: chatId,
-        role: 'AI',
-      },
-    });
-
-    if (clientSocket != undefined) {
-      const aiAnswer = 'Имитация ответа: Когда первые колонисты Марса, изнурённые долгим перелётом сквозь радиационные пояса, наконец ступили на ржавую поверхность Красной планеты и установили купола биодомов с искусственной гравитацией, они вдруг осознали, что всё это время их сопровождал таинственный сигнал — возможно, след древней цивилизации, оставленный в кристаллах под поверхностью Долины Маринер, где роботы-разведчики уже обнаружили странные симметричные структуры, напоминающие то ли храм, то ли гигантский квантовый компьютер, способный, согласно гипотезам, искривлять пространство-время.'
-      
-      await this.simulateResponse(aiAnswer, clientSocket, chatId);
-
-    const version_chat = await this.prisma.messageVersion.create({
-      data: {
-        messageId: message_chat.id,
-        content: aiAnswer,
-        type: dto.type,
-      },
-    });
-
-    return this.prisma.message.update({
-        where: {id: message_chat.id},
-        data: {
-            currentVersionId: version_chat.id,
-        },
-        include: {
-            versions: true,
-        },
-    });
-  }
-  throw new Error('Клиент не подключен через WebSocket');
+    this.chatSocket.send(JSON.stringify({ event: 'ai_request', payload: payload }));
   }
 
   async editMessage(messageId: string, userId: string, dto: UpdateMessageDto) {

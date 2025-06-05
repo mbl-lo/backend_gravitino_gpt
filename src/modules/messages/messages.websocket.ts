@@ -14,54 +14,48 @@ import { JwtService } from '@nestjs/jwt';
 import { WebSocket } from 'ws';
 
 @WebSocketGateway({
-  namespace: '/messages',
-  cors: {
-    origin: [
-      'http://localhost:3001',
-      'https://localhost:3001',
-      'http://localhost:3000',
-      'https://localhost:3000',
-      'http://localhost:8080',
-      'https://localhost:8080',
-      'http://localhost',
-      'https://localhost',
-      'https://terminal.gravitino.ru',
-      'http://terminal.gravitino.ru',
-      'https://employer-ai.gravitino.ru',
-      'http://employer-ai.gravitino.ru',
-      'https://chat-ai.gravitino.ru'
-    ]
-  }
+  cors: true
 })
-export class MessagesGateway {
+export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   chatSocket: WebSocket;
 
   @WebSocketServer()
   server: Server;
 
-  constructor(private readonly messagesService: MessagesService, private readonly jwtSevice: JwtService) {}
+  constructor(private readonly messagesService: MessagesService, private readonly jwtSevice: JwtService) {
+    messagesService.server = this.server;
+  }
+    
+  handleConnection(client: Socket) {
+    console.log(`Client connected: ${client.id}`);
+  }
+
+  handleDisconnect(client: Socket) {
+    console.log(`Client disconnected: ${client.id}`);
+  }
 
   @SubscribeMessage('send_message')
   @Permissions('SEND_MESSAGE')
   async handleSendMessage(
-    client: any,
+    client: Socket,
     payload: { chatId: string; dto: CreateMessageDto },
   ) {
+    if (!client.handshake.headers.authorization) throw new Error('Пользователь не авторизован');
+    
     const data = this.jwtSevice.verify(client.handshake.headers.authorization, {
       secret: process.env.JWT_ACCESS_SECRET,
     })
     const userId = data.userId;
     const { chatId, dto } = payload;
     
-    const message = await this.messagesService.sendMessage(chatId, userId, dto, client);
-    const response = {
-      message: `Вы отправили: ${dto.content}`,
-      created: this.mapToFullMessageDto(message, false),
-    };
+    await this.messagesService.sendMessage(chatId, userId, dto, client);
+    // const response = {
+    //   message: `Вы отправили: ${dto.content}`,
+    //   created: this.mapToFullMessageDto(message, false),
+    // };
 
-    this.server.emit('new_message', response);
-    return response;
+    // this.server.emit('response', response);
   }
 
   private fixEncoding(str: string): string {

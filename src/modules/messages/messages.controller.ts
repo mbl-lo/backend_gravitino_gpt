@@ -31,23 +31,23 @@ import { Permissions } from 'src/permissions/decorators/permissions.decorator';
 export class MessagesController {
   constructor(private readonly messagesService: MessagesService) {}
 
-  @Post('chats/:chatId/messages')
-  @Permissions('SEND_MESSAGE')
-  @ApiOperation({ summary: 'Отправить новое сообщение' })
-  @ApiResponse({ status: 201, type: FullMessageDto })
-  async sendMessage(
-    @Param('chatId') chatId: string,
-    @Body() dto: CreateMessageDto,
-    @Req() req: any,
-  ) {
-    const userId = req.user.userId;
-    const message = await this.messagesService.sendMessage(chatId, userId, dto);
+  // @Post('chats/:chatId/messages')
+  // @Permissions('SEND_MESSAGE')
+  // @ApiOperation({ summary: 'Отправить новое сообщение' })
+  // @ApiResponse({ status: 201, type: FullMessageDto })
+  // async sendMessage(
+  //   @Param('chatId') chatId: string,
+  //   @Body() dto: CreateMessageDto,
+  //   @Req() req: any,
+  // ) {
+  //   const userId = req.user.userId;
+  //   const message = await this.messagesService.sendMessage(chatId, userId, dto);
 
-    return {
-      message: `Вы отправили: ${dto.content}`,
-      created: this.mapToFullMessageDto(message, false),
-    };
-  }
+  //   return {
+  //     message: `Вы отправили: ${dto.content}`,
+  //     created: this.mapToFullMessageDto(message, false),
+  //   };
+  // }
 
   @Patch('messages/:messageId')
   @ApiOperation({ summary: 'Редактировать сообщение' })
