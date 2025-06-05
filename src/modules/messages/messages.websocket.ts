@@ -4,37 +4,43 @@ import {
   WebSocketServer,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { MessagesService } from './messages.service';
 import { CreateMessageDto, UpdateMessageDto, FullMessageDto } from './dto/messages.dto';
 import { Permissions } from 'src/permissions/decorators/permissions.decorator';
 import { JwtService } from '@nestjs/jwt';
+import { WebSocket } from 'ws';
 
 @WebSocketGateway({
-  cors: true
-})
-export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect {
-
-  @SubscribeMessage('message')
-  handleMessage(client: any, payload: any) {
-    return {
-      event: 'reply',
-      data: `User ${client.user.sub} said: ${payload.text}`
-    };
+  namespace: '/messages',
+  cors: {
+    origin: [
+      'http://localhost:3001',
+      'https://localhost:3001',
+      'http://localhost:3000',
+      'https://localhost:3000',
+      'http://localhost:8080',
+      'https://localhost:8080',
+      'http://localhost',
+      'https://localhost',
+      'https://terminal.gravitino.ru',
+      'http://terminal.gravitino.ru',
+      'https://employer-ai.gravitino.ru',
+      'http://employer-ai.gravitino.ru',
+      'https://chat-ai.gravitino.ru'
+    ]
   }
+})
+export class MessagesGateway {
+
+  chatSocket: WebSocket;
+
   @WebSocketServer()
   server: Server;
 
   constructor(private readonly messagesService: MessagesService, private readonly jwtSevice: JwtService) {}
-
-  handleConnection(client: Socket) {
-  
-  }
-
-  handleDisconnect(client: Socket) {
-    console.log(`Client disconnected: ${client.id}`);
-  }
 
   @SubscribeMessage('send_message')
   @Permissions('SEND_MESSAGE')
@@ -54,7 +60,7 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
       created: this.mapToFullMessageDto(message, false),
     };
 
-    this.server.to(chatId).emit('new_message', response);
+    this.server.emit('new_message', response);
     return response;
   }
 

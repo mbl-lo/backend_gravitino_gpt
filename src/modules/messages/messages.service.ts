@@ -2,12 +2,47 @@ import {ForbiddenException, Injectable, NotFoundException,} from '@nestjs/common
 import {PrismaService} from 'src/prisma/prisma.service';
 import {CreateMessageDto, UpdateMessageDto} from './dto/messages.dto';
 import axios from 'axios';
-import { Socket, } from 'socket.io';
+import { Server, Socket, } from 'socket.io';
 import * as url from "node:url";
+import { OnGatewayConnection, OnGatewayDisconnect, WebSocketServer } from '@nestjs/websockets';
+import { JwtService } from '@nestjs/jwt';
+import { WebSocket } from 'ws';
 
 @Injectable()
-export class MessagesService {
-  constructor(private readonly prisma: PrismaService) {}
+export class MessagesService implements OnGatewayConnection, OnGatewayDisconnect{
+  chatSocket: WebSocket;
+  @WebSocketServer()
+  server: Server;
+  
+  constructor(private readonly prisma: PrismaService, private readonly jwtSevice: JwtService) {this.chatSocket = new WebSocket("ws://localhost:10000");
+    this.chatSocket = new WebSocket("ws://localhost:10000");
+    this.chatSocket.on('message', this.handleMessage);
+  
+    this.chatSocket.on('open', () => this.chatSocket.send(JSON.stringify({ event: 'splitText' })));
+    }
+     handleConnection(client: Socket) {
+    
+  }
+
+  handleDisconnect(client: Socket) {
+    console.log(`Client disconnected: ${client.id}`);
+  }
+  
+    handleMessage(data: WebSocket.Data) {
+      const message = JSON.parse(data.toString());
+  
+      switch (message.event) {
+        case 'word':
+          console.log(message.content);
+          break;
+        default:
+          console.log('DONE!');
+      }
+    }
+  
+    handleDone() {
+      console.log("DONE!");
+    }
   private fixEncoding(str: string): string {
     return Buffer.from(str, 'latin1').toString('utf8');
   }
